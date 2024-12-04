@@ -7,20 +7,20 @@ export const handler: SQSHandler = async (event) => {
   console.log("Processing DLQ events:", JSON.stringify(event, null, 2));
 
   for (const record of event.Records) {
-    const message = JSON.parse(record.body);
-    const fileName = message.Records[0].s3.object.key;
+    const message = JSON.parse(record.body); // Parses the SQS message body
+    const fileName = message.Records[0].s3.object.key; // Extracts the S3 object key
 
     const params = {
-      Destination: { ToAddresses: [process.env.SES_EMAIL_TO!] },
+      Destination: { ToAddresses: [process.env.SES_EMAIL_TO!] }, // Sends to recipient
       Message: {
-        Body: { Text: { Data: `File upload rejected: ${fileName}` } },
-        Subject: { Data: "File Upload Rejected" },
+        Body: { Text: { Data: `File upload rejected: ${fileName}` } }, // Email body
+        Subject: { Data: "File Upload Rejected" }, // Email subject
       },
-      Source: process.env.SES_EMAIL_FROM!,
+      Source: process.env.SES_EMAIL_FROM!, // Sender's address
     };
 
     try {
-      await sesClient.send(new SendEmailCommand(params));
+      await sesClient.send(new SendEmailCommand(params)); // Sends email
       console.log(`Rejection email sent for ${fileName}`);
     } catch (error) {
       console.error("Failed to send rejection email:", error);

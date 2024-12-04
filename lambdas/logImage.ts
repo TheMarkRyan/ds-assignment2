@@ -29,7 +29,8 @@ export const handler: SQSHandler = async (event) => {
 
         if (!fileType || (fileType !== "jpeg" && fileType !== "png")) {
           console.error(`Unsupported file type: ${fileType}`);
-          continue;
+          // Throw an error to trigger DLQ processing
+          throw new Error(`Unsupported file type: ${fileType}`);
         }
 
         try {
@@ -42,10 +43,14 @@ export const handler: SQSHandler = async (event) => {
           console.log(`Successfully logged ${objectKey} to DynamoDB`);
         } catch (dbError) {
           console.error(`DynamoDB Write Error for ${objectKey}:`, dbError);
+          // Rethrow the error to ensure the message is retried or sent to DLQ
+          throw dbError;
         }
       }
     } catch (err) {
       console.error("Error Processing SQS Message:", err);
+      // Rethrow the error to fail the Lambda invocation
+      throw err;
     }
   }
 };
