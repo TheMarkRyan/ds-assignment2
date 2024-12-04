@@ -29,5 +29,13 @@
     "aws-cdk-lib": "2.156.0",
     "constructs": "^10.3.0",
     "source-map-support": "^0.5.21"
-  }
+  },
+  "description": "aws s3 cp test.txt s3://a-bucket/test.txt --metadata '{\"x-amz-meta-cms-id\":\"34533452\"}' #\u0000 \u0000d\u0000s\u0000-\u0000e\u0000d\u0000a\u0000-\u0000l\u0000a\u0000b\u0000\r\u0000 \u0000",
+  "main": "jest.config.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
