@@ -30,23 +30,19 @@ export class EDAAppStack extends cdk.Stack {
     // SNS Topic
     const imageTopic = new sns.Topic(this, "ImageTopic");
 
+    // Dead Letter Queue (DLQ)
+    const dlq = new sqs.Queue(this, "DLQ", {
+      retentionPeriod: cdk.Duration.days(14),
+    });
+
     // SQS Queue
     const queue = new sqs.Queue(this, "ImageQueue", {
       visibilityTimeout: cdk.Duration.seconds(30),
+      deadLetterQueue: {
+        queue: dlq,
+        maxReceiveCount: 3,
+      },
     });
-
-    // Allow SNS to send messages to SQS
-    queue.addToResourcePolicy(
-      new cdk.aws_iam.PolicyStatement({
-        effect: cdk.aws_iam.Effect.ALLOW,
-        principals: [new cdk.aws_iam.ServicePrincipal("sns.amazonaws.com")],
-        actions: ["sqs:SendMessage"],
-        resources: [queue.queueArn],
-        conditions: {
-          ArnEquals: { "aws:SourceArn": imageTopic.topicArn },
-        },
-      })
-    );
 
     // Log Image Lambda
     const logImageFn = new lambdanode.NodejsFunction(this, "LogImageFn", {
@@ -62,17 +58,52 @@ export class EDAAppStack extends cdk.Stack {
     imageTable.grantWriteData(logImageFn);
     imagesBucket.grantRead(logImageFn);
 
-    // SNS Subscription for SQS
-    imageTopic.addSubscription(new subs.SqsSubscription(queue));
+    // Rejection Mailer Lambda
+    const rejectionMailerFn = new lambdanode.NodejsFunction(
+      this,
+      "RejectionMailerFn",
+      {
+        runtime: lambda.Runtime.NODEJS_18_X,
+        entry: `${__dirname}/../lambdas/rejectionMailer.ts`,
+        environment: {
+          SES_EMAIL_FROM: "your-email@example.com",
+          SES_EMAIL_TO: "user-email@example.com",
+          SES_REGION: "us-east-1",
+        },
+        timeout: cdk.Duration.seconds(15),
+      }
+    );
 
-    // S3 Event Notification to SNS
+    // Confirmation Mailer Lambda
+    const confirmationMailerFn = new lambdanode.NodejsFunction(
+      this,
+      "ConfirmationMailerFn",
+      {
+        runtime: lambda.Runtime.NODEJS_18_X,
+        entry: `${__dirname}/../lambdas/confirmationMailer.ts`,
+        environment: {
+          SES_EMAIL_FROM: "your-email@example.com",
+          SES_EMAIL_TO: "user-email@example.com",
+          SES_REGION: "us-east-1",
+        },
+        timeout: cdk.Duration.seconds(15),
+      }
+    );
+
+    // Add SNS Subscriptions
+    imageTopic.addSubscription(new subs.LambdaSubscription(confirmationMailerFn));
+
+    // S3 Bucket Notifications
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.SnsDestination(imageTopic)
     );
 
-    // SQS Event Source for Lambda
-    logImageFn.addEventSource(new events.SqsEventSource(queue));
+    // Add SQS event source to Log Image Lambda
+    logImageFn.addEventSource(new events.SqsEventSource(queue, { batchSize: 5 }));
+
+    // Rejection Mailer listens to DLQ
+    rejectionMailerFn.addEventSource(new events.SqsEventSource(dlq));
 
     // Outputs
     new cdk.CfnOutput(this, "BucketName", {
@@ -92,7 +123,12 @@ export class EDAAppStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "QueueURL", {
       value: queue.queueUrl,
-      description: "The URL of the SQS queue.",
+      description: "The URL of the main SQS queue.",
+    });
+
+    new cdk.CfnOutput(this, "DLQURL", {
+      value: dlq.queueUrl,
+      description: "The URL of the Dead Letter Queue (DLQ).",
     });
   }
 }

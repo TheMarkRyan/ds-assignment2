@@ -1,0 +1,1 @@
+This is an example text to show that only jpg and png files are supported.
