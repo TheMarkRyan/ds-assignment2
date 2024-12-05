@@ -1,41 +1,53 @@
-/* eslint-disable import/extensions, import/no-absolute-path */
-import { SQSHandler } from "aws-lambda";
-import {
-  GetObjectCommand,
-  PutObjectCommandInput,
-  GetObjectCommandInput,
-  S3Client,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
+import { DynamoDBClient, DeleteItemCommand } from "@aws-sdk/client-dynamodb";
+import { SNSEvent } from "aws-lambda";
 
-const s3 = new S3Client();
+// Initialize DynamoDB Client
+const dynamoDb = new DynamoDBClient({});
 
-export const handler: SQSHandler = async (event) => {
-  console.log("Event ", JSON.stringify(event));
+export const handler = async (event: SNSEvent) => {
+  console.log("Received SNS event:", JSON.stringify(event, null, 2));
+
   for (const record of event.Records) {
-    const recordBody = JSON.parse(record.body);        // Parse SQS message
-    const snsMessage = JSON.parse(recordBody.Message); // Parse SNS message
+    try {
+      // Parse SNS message
+      const snsMessage = JSON.parse(record.Sns.Message);
+      console.log("Parsed SNS Message:", JSON.stringify(snsMessage, null, 2));
 
-    if (snsMessage.Records) {
-      console.log("Record body ", JSON.stringify(snsMessage));
-      for (const messageRecord of snsMessage.Records) {
-        const s3e = messageRecord.s3;
-        const srcBucket = s3e.bucket.name;
-        // Object key may have spaces or unicode non-ASCII characters.
-        const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
-        let origimage = null;
-        try {
-          // Download the image from the S3 source bucket.
-          const params: GetObjectCommandInput = {
-            Bucket: srcBucket,
-            Key: srcKey,
-          };
-          origimage = await s3.send(new GetObjectCommand(params));
-          // Process the image ......
-        } catch (error) {
-          console.log(error);
+      if (snsMessage.Records) {
+        for (const s3Event of snsMessage.Records) {
+          const srcBucket = s3Event.s3.bucket.name;
+          const srcKey = decodeURIComponent(
+            s3Event.s3.object.key.replace(/\+/g, " ")
+          );
+
+          // Identify event type
+          const eventType = s3Event.eventName; // e.g., "ObjectCreated:Put", "ObjectRemoved:Delete"
+          console.log(`Processing event type: ${eventType} for ${srcKey}`);
+
+          if (eventType.startsWith("ObjectRemoved")) {
+            console.log(`Deleting item from DynamoDB for removed object: ${srcKey}`);
+            const deleteParams = {
+              TableName: process.env.TABLE_NAME!,
+              Key: {
+                image_name: { S: srcKey },
+              },
+            };
+
+            try {
+              await dynamoDb.send(new DeleteItemCommand(deleteParams));
+              console.log(`Successfully deleted item ${srcKey} from DynamoDB`);
+            } catch (error) {
+              console.error(`Error deleting item ${srcKey} from DynamoDB:`, error);
+            }
+          } else {
+            console.log(`Event type not relevant for processing: ${eventType}`);
+          }
         }
+      } else {
+        console.log("No S3 records found in SNS message");
       }
+    } catch (error) {
+      console.error("Error processing SNS record:", error);
     }
   }
 };

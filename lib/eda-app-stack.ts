@@ -1,4 +1,3 @@
-
 import * as cdk from 'aws-cdk-lib';
 import * as lambdanode from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
@@ -12,6 +11,7 @@ import * as events from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { SES_REGION, SES_EMAIL_FROM, SES_EMAIL_TO } from '../env'; 
+
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -27,6 +27,7 @@ export class EDAAppStack extends cdk.Stack {
       partitionKey: { name: 'image_name', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+      stream: dynamodb.StreamViewType.NEW_IMAGE, // Enable DynamoDB streams
     });
 
     // SNS Topic
@@ -73,6 +74,20 @@ export class EDAAppStack extends cdk.Stack {
     imageTable.grantWriteData(logImageFn);
     imagesBucket.grantRead(logImageFn);
 
+    // Process Image Lambda (handles both ObjectCreated and ObjectRemoved)
+    const processImageFn = new lambdanode.NodejsFunction(this, 'ProcessImageFn', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      entry: `${__dirname}/../lambdas/processImage.ts`,
+      environment: {
+        TABLE_NAME: imageTable.tableName,
+      },
+      timeout: cdk.Duration.seconds(15),
+    });
+
+    // Grant permissions to Process Image Lambda
+    imageTable.grantWriteData(processImageFn);
+    imagesBucket.grantRead(processImageFn);
+
     // Rejection Mailer Lambda
     const rejectionMailerFn = new lambdanode.NodejsFunction(this, 'RejectionMailerFn', {
       runtime: lambda.Runtime.NODEJS_18_X,
@@ -117,9 +132,15 @@ export class EDAAppStack extends cdk.Stack {
       new subs.SqsSubscription(queue)
     );
 
-    // Confirmation Mailer Lambda (directly subscribes to SNS for image upload events)
+    // Process Image Lambda subscribes to SNS (ObjectRemoved events)
     imageTopic.addSubscription(
-      new subs.LambdaSubscription(confirmationMailerFn)
+      new subs.LambdaSubscription(processImageFn, {
+        filterPolicy: {
+          eventType: sns.SubscriptionFilter.stringFilter({
+            allowlist: ['ObjectRemoved'], // Filter for delete events
+          }),
+        },
+      })
     );
 
     // Update Table Lambda (for metadata updates)
@@ -133,10 +154,21 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
-    // S3 Event Notification to SNS (for object created events)
+    // S3 Event Notifications to SNS
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.SnsDestination(imageTopic)
+    );
+    imagesBucket.addEventNotification(
+      s3.EventType.OBJECT_REMOVED,
+      new s3n.SnsDestination(imageTopic)
+    );
+
+    // Add DynamoDB Stream to Confirmation Mailer Lambda
+    confirmationMailerFn.addEventSource(
+      new events.DynamoEventSource(imageTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+      })
     );
 
     // Add SQS event source to Log Image Lambda

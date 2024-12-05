@@ -27,12 +27,14 @@ export const handler: SQSHandler = async (event) => {
 
         console.log(`Processing file: ${objectKey} of type: ${fileType}`);
 
+        // Validate file type
         if (!fileType || (fileType !== "jpeg" && fileType !== "png")) {
           console.error(`Unsupported file type: ${fileType}`);
           // Throw an error to trigger DLQ processing
           throw new Error(`Unsupported file type: ${fileType}`);
         }
 
+        // Record the valid image in DynamoDB
         try {
           await dynamoDb
             .put({
