@@ -1,3 +1,4 @@
+
 import * as cdk from 'aws-cdk-lib';
 import * as lambdanode from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
@@ -10,7 +11,7 @@ import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as events from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
-
+import { SES_REGION, SES_EMAIL_FROM, SES_EMAIL_TO } from '../env'; 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -77,9 +78,9 @@ export class EDAAppStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_18_X,
       entry: `${__dirname}/../lambdas/rejectionMailer.ts`,
       environment: {
-        SES_EMAIL_FROM: 'your-verified-sender-email@example.com',
-        SES_EMAIL_TO: 'recipient-email@example.com',
-        SES_REGION: 'us-east-1',
+        SES_EMAIL_FROM,
+        SES_EMAIL_TO,
+        SES_REGION,
       },
       timeout: cdk.Duration.seconds(15),
     });
@@ -89,9 +90,9 @@ export class EDAAppStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_18_X,
       entry: `${__dirname}/../lambdas/confirmationMailer.ts`,
       environment: {
-        SES_EMAIL_FROM: 'your-verified-sender-email@example.com',
-        SES_EMAIL_TO: 'recipient-email@example.com',
-        SES_REGION: 'us-east-1',
+        SES_EMAIL_FROM,
+        SES_EMAIL_TO,
+        SES_REGION,
       },
       timeout: cdk.Duration.seconds(15),
     });
@@ -143,6 +144,15 @@ export class EDAAppStack extends cdk.Stack {
 
     // Rejection Mailer listens to DLQ
     rejectionMailerFn.addEventSource(new events.SqsEventSource(dlq));
+
+    // Grant SES SendEmail permission to Lambda functions
+    const sesPolicy = new iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    });
+
+    confirmationMailerFn.addToRolePolicy(sesPolicy);
+    rejectionMailerFn.addToRolePolicy(sesPolicy);
 
     // Outputs
     new cdk.CfnOutput(this, 'BucketName', {

@@ -7,23 +7,34 @@ export const handler: SQSHandler = async (event) => {
   console.log("Processing DLQ events:", JSON.stringify(event, null, 2));
 
   for (const record of event.Records) {
-    const message = JSON.parse(record.body); // Parses the SQS message body
-    const fileName = message.Records[0].s3.object.key; // Extracts the S3 object key
-
-    const params = {
-      Destination: { ToAddresses: [process.env.SES_EMAIL_TO!] }, // Sends to recipient
-      Message: {
-        Body: { Text: { Data: `File upload rejected: ${fileName}` } }, // Email body
-        Subject: { Data: "File Upload Rejected" }, // Email subject
-      },
-      Source: process.env.SES_EMAIL_FROM!, // Sender's address
-    };
-
     try {
-      await sesClient.send(new SendEmailCommand(params)); // Sends email
+      // Parse SQS message body to get SNS message
+      const snsMessage = JSON.parse(record.body);
+      console.log("Parsed SNS Message:", snsMessage);
+
+      // Parse S3 event data from SNS message
+      const s3Event = JSON.parse(snsMessage.Message);
+      console.log("Parsed S3 Event:", s3Event);
+
+      // Extract file name from S3 event
+      const fileName = s3Event.Records[0].s3.object.key;
+      console.log(`File Name: ${fileName}`);
+
+      // Set up email parameters
+      const params = {
+        Destination: { ToAddresses: [process.env.SES_EMAIL_TO!] },
+        Message: {
+          Body: { Text: { Data: `File upload rejected: ${fileName}` } },
+          Subject: { Data: "File Upload Rejected" },
+        },
+        Source: process.env.SES_EMAIL_FROM!,
+      };
+
+      // Send email using SES
+      await sesClient.send(new SendEmailCommand(params));
       console.log(`Rejection email sent for ${fileName}`);
     } catch (error) {
-      console.error("Failed to send rejection email:", error);
+      console.error("Error processing record:", error);
     }
   }
 };
